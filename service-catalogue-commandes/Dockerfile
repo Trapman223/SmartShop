@@ -153,7 +153,14 @@ RUN npm ci --omit=dev --omit=peer && npm cache clean --force
 #  Les migrations restent applicables : elles passent par un conteneur bâti sur
 #  le stage `builder`, qui dispose du CLI complet (cf. docker-compose.dev.yml).
 # ---------------------------------------------------------------------------
+#  @prisma/config n'est utilisé que par le CLI, pour charger un
+#  prisma.config.ts. Le client généré n'y fait aucune référence et
+#  PrismaClient s'instancie sans lui (vérifié). Il traîne pourtant
+#  deepmerge-ts (3 avis de sécurité « high ») et effect (34 Mo) dans
+#  l'image de production. On le retire : la vulnérabilité disparaît avec.
 RUN rm -rf node_modules/@prisma/engines node_modules/@prisma/fetch-engine \
+      node_modules/@prisma/config node_modules/deepmerge-ts \
+      node_modules/effect node_modules/fast-check \
  && find node_modules/@prisma/client/runtime -name '*.map' -delete \
  && find node_modules/@prisma/client/runtime \
       \( -name '*_bg.mysql.*' -o -name '*_bg.sqlite.*' \

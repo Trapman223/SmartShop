@@ -1,0 +1,55 @@
+flowchart TB
+    CLIENT["Client<br/>curl · Postman · navigateur<br/>Apollo Sandbox · Swagger UI"]
+
+    subgraph SWARM["Docker Swarm — stack « smart-shop »"]
+        direction TB
+
+        subgraph PUB["Réseau overlay : smartshop-public"]
+            direction LR
+            CAT["<b>catalogue-api</b><br/><b>3 replicas</b><br/>REST · Express 5<br/>:3000"]
+            AVI["<b>avis-api</b><br/><b>3 replicas</b><br/>GraphQL · Apollo 4<br/>:4000"]
+            PRT["<b>portainer</b><br/>1 replica<br/>:9443"]
+        end
+
+        subgraph NPG["Réseau overlay : smartshop-pg — internal"]
+            direction LR
+            MIG["<b>catalogue-migrate</b><br/>job éphémère<br/>prisma migrate deploy"]
+            PG[("<b>postgres</b><br/>PostgreSQL 16 · 1 replica<br/>volume pgdata")]
+        end
+
+        subgraph NMG["Réseau overlay : smartshop-mongo — internal"]
+            MG[("<b>mongodb</b><br/>MongoDB 7 · 1 replica<br/>volume mongodata")]
+        end
+
+        subgraph NAG["Réseau overlay : portainer-agent"]
+            AGT["<b>portainer-agent</b><br/>mode global<br/>1 par noeud"]
+        end
+
+        SOCK[/"/var/run/docker.sock<br/>noeud manager"/]
+    end
+
+    CLIENT -->|"REST · HTTP :3000"| CAT
+    CLIENT -->|"GraphQL · HTTP :4000"| AVI
+    CLIENT -->|"HTTPS :9443"| PRT
+
+    CAT ==>|"SQL · transaction<br/>SELECT … FOR UPDATE"| PG
+    AVI ==>|"requêtes et pipelines<br/>d'agrégation"| MG
+    MIG -->|"applique le schéma<br/>avant le démarrage"| PG
+
+    AVI -. "<b>Flux 1</b> — REST<br/>GET /products/batch<br/>DataLoader : anti N+1" .-> CAT
+    CAT -. "<b>Flux 2</b> — GraphQL<br/>productRatings<br/>timeout 800 ms · repli null" .-> AVI
+
+    PRT <-->|"tasks.portainer-agent"| AGT
+    AGT -->|"lecture seule"| SOCK
+
+    classDef api fill:#1f4e79,stroke:#14395a,color:#fff,stroke-width:2px
+    classDef base fill:#2e7d32,stroke:#1b5e20,color:#fff,stroke-width:2px
+    classDef outil fill:#6a4b9c,stroke:#4b3570,color:#fff,stroke-width:2px
+    classDef job fill:#b26a00,stroke:#7f4b00,color:#fff,stroke-width:1px
+    classDef ext fill:#eceff3,stroke:#8a94a3,color:#1a1d23,stroke-width:1px
+
+    class CAT,AVI api
+    class PG,MG base
+    class PRT,AGT outil
+    class MIG job
+    class CLIENT,SOCK ext

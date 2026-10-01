@@ -10,6 +10,10 @@ import { unwrapResolverError } from '@apollo/server/errors';
 import { isAppError } from './errors/AppError.js';
 import { translateMongoError } from './utils/mongoError.js';
 import { securityHeaders } from './middlewares/securityHeaders.js';
+import {
+  createDepthLimitRule,
+  createRootFieldLimitRule,
+} from './graphql/limits.js';
 import { typeDefs } from './graphql/typeDefs.js';
 import { resolvers } from './resolvers/index.js';
 import { buildContext } from './context.js';
@@ -17,6 +21,27 @@ import type { GraphQLContext } from './context.js';
 import { env, SERVICE_NAME } from './config/env.js';
 import { isDatabaseReachable } from './db/mongoose.js';
 import { logger } from './lib/logger.js';
+
+/**
+ * Codes d'erreur émis par GraphQL et Apollo pour des fautes imputables au
+ * CLIENT : requête mal formée, champ inconnu, type incorrect, variable
+ * manquante.
+ *
+ * Ils ne révèlent aucun détail interne du service — ils décrivent la requête
+ * que le client vient d'envoyer. Les masquer derrière « Erreur interne du
+ * serveur » rendrait l'API inexploitable : une simple faute de frappe sur un
+ * nom de champ deviendrait indiagnosticable, et chaque erreur de saisie
+ * polluerait les logs en niveau `error`.
+ */
+const CLIENT_ERROR_CODES = new Set([
+  'GRAPHQL_PARSE_FAILED',
+  'GRAPHQL_VALIDATION_FAILED',
+  'BAD_USER_INPUT',
+  'BAD_REQUEST',
+  'PERSISTED_QUERY_NOT_FOUND',
+  'PERSISTED_QUERY_NOT_SUPPORTED',
+  'OPERATION_RESOLUTION_FAILURE',
+]);
 
 /**
  * Apollo Server est monté sur Express plutôt qu'en mode standalone : cela
@@ -29,7 +54,13 @@ export function createApolloServer(
   return new ApolloServer<GraphQLContext>({
     typeDefs,
     resolvers,
+    // Introspection laissée active : le sujet attend que le correcteur
+    // explore le schéma depuis Apollo Sandbox (CLAUDE.md section 8, règle 8).
     introspection: env.GRAPHQL_INTROSPECTION,
+    validationRules: [
+      createDepthLimitRule(env.GRAPHQL_MAX_DEPTH),
+      createRootFieldLimitRule(env.GRAPHQL_MAX_ROOT_FIELDS),
+    ],
     plugins:
       httpServer !== undefined
         ? [ApolloServerPluginDrainHttpServer({ httpServer })]
@@ -68,6 +99,14 @@ export function createApolloServer(
         };
       }
 
+      // Erreur imputable au client : transmise telle quelle, journalisée en
+      // `warn`. C'est un usage incorrect de l'API, pas un défaut du service.
+      const code = formatted.extensions?.['code'];
+      if (typeof code === 'string' && CLIENT_ERROR_CODES.has(code)) {
+        logger.warn({ code, path: formatted.path }, formatted.message);
+        return formatted;
+      }
+
       logger.error({ error: original }, 'erreur GraphQL non gérée');
 
       // Aucun stack trace renvoyé au client (cf. CLAUDE.md section 8, règle 8).
@@ -93,7 +132,13 @@ export async function createApp(
   app.use(securityHeaders);
   app.use(
     cors({
-      origin: env.CORS_ORIGINS.includes('*') ? true : env.CORS_ORIGINS,
+      // `origin: true` RENVERRAIT l'origine de l'appelant dans
+      // Access-Control-Allow-Origin. Avec « * » configuré, on veut un « * »
+      // littéral : l'intention est explicite, et si des credentials étaient
+      // un jour activés, un en-tête reflété deviendrait exploitable alors
+      // qu'un « * » est refusé par les navigateurs dans ce cas.
+      origin: env.CORS_ORIGINS.includes('*') ? '*' : env.CORS_ORIGINS,
+      credentials: false,
     }),
   );
 

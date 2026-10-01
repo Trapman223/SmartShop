@@ -174,7 +174,12 @@ services:
       # Nom DNS Swarm (flux 1), jamais localhost.
       CATALOGUE_SERVICE_URL: http://catalogue-api:3000
       CATALOGUE_SERVICE_TIMEOUT_MS: "800"
+      # Introspection active : le sujet attend que le correcteur explore
+      # le schéma depuis Apollo Sandbox.
       GRAPHQL_INTROSPECTION: "true"
+      # Garde-fous de validation (CLAUDE.md section 8, règle 8).
+      GRAPHQL_MAX_DEPTH: "8"
+      GRAPHQL_MAX_ROOT_FIELDS: "20"
       CORS_ORIGINS: "*"
       DB_CONNECT_MAX_RETRIES: "6"
       DB_CONNECT_BASE_DELAY_MS: "1000"

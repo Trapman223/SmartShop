@@ -74,3 +74,26 @@ describe('avis-api — en-têtes de sécurité', () => {
     expect(response.headers['x-content-type-options']).toBe('nosniff');
   });
 });
+
+describe('avis-api — CORS', () => {
+  it('renvoie « * » littéral, pas l’origine de l’appelant', async () => {
+    // `origin: true` dans le middleware cors renverrait l'origine reçue.
+    // Avec « * » configuré, on veut un « * » littéral : l'intention est
+    // explicite et aucun site tiers n'est implicitement reconnu.
+    const response = await request(app)
+      .get('/health')
+      .set('Origin', 'https://site-tiers.example');
+
+    expect(response.headers['access-control-allow-origin']).toBe('*');
+  });
+
+  it('n’autorise pas l’envoi de credentials', async () => {
+    const response = await request(app)
+      .get('/health')
+      .set('Origin', 'https://site-tiers.example');
+
+    // Un « * » combiné à allow-credentials est refusé par les navigateurs ;
+    // l'en-tête ne doit tout simplement pas être émis.
+    expect(response.headers['access-control-allow-credentials']).toBeUndefined();
+  });
+});

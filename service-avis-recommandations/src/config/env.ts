@@ -22,6 +22,12 @@ const envSchema = z.object({
     .default('true')
     .transform((value) => value === 'true'),
 
+  // Garde-fous de validation (CLAUDE.md section 8, règle 8).
+  // Profondeur : le schéma plafonne à 4 niveaux, 8 laisse de la marge.
+  // Champs racine : borne l'amplification par alias.
+  GRAPHQL_MAX_DEPTH: z.coerce.number().int().min(1).max(50).default(8),
+  GRAPHQL_MAX_ROOT_FIELDS: z.coerce.number().int().min(1).max(200).default(20),
+
   // Origines autorisées, séparées par des virgules. « * » ouvre à tous —
   // acceptable en développement et pour la démonstration, à restreindre
   // dès qu'une interface web réelle consomme l'API.
