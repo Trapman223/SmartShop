@@ -78,7 +78,7 @@ services:
   catalogue-api:
     build:
       context: ./service-catalogue-commandes
-    image: smartshop/catalogue-api:1.0.0
+    image: smartshop/catalogue-api:1.1.0
     ports:
       - "${CATALOGUE_HOST_PORT:-3000}:3000"
     environment:
@@ -97,7 +97,7 @@ services:
   avis-api:
     build:
       context: ./service-avis-recommandations
-    image: smartshop/avis-api:1.0.0
+    image: smartshop/avis-api:1.1.0
     ports:
       - "${AVIS_HOST_PORT:-4000}:4000"
     environment:
