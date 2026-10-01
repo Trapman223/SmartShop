@@ -15,7 +15,10 @@ import type {
 
 export async function list(_req: Request, res: Response): Promise<void> {
   const query = validated<ListProductsQuery>(res, 'query');
-  const result = await productService.listProducts(query);
+  // Trace posée par le middleware requestId, propagée jusqu'à l'appel
+  // sortant vers avis-api (flux 2).
+  const traceId = String(res.locals['requestId'] ?? '');
+  const result = await productService.listProducts(query, traceId);
 
   res.status(200).json(result);
 }

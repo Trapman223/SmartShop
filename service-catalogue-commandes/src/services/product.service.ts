@@ -1,5 +1,8 @@
 import * as productRepository from '../repositories/product.repository.js';
 import { ConflictError, NotFoundError } from '../errors/AppError.js';
+import { fetchProductRatings } from '../clients/avis.client.js';
+import type { ProductRating } from '../clients/avis.client.js';
+import { logger } from '../lib/logger.js';
 import { buildMeta, buildPagination } from '../utils/pagination.js';
 import type { PaginationMeta } from '../utils/pagination.js';
 import { toProductDto } from '../utils/serializers.js';
@@ -10,14 +13,65 @@ import type {
   ReplaceProductInput,
 } from '../validators/product.validator.js';
 
+/**
+ * Produit du catalogue enrichi de sa note moyenne (flux 2).
+ *
+ * `rating` est nullable à dessein : il vaut `null` lorsque `avis-api` est
+ * indisponible — mode dégradé — comme lorsque le produit n'a reçu aucun avis.
+ * Les deux cas se distinguent dans les logs, pas dans la réponse : pour un
+ * client du catalogue, « pas de note disponible » suffit.
+ */
+export interface ProductWithRatingDto extends ProductDto {
+  rating: ProductRating | null;
+}
+
+/**
+ * Flux 2 — enrichissement par les notes d'`avis-api`.
+ *
+ * Un seul appel GraphQL pour toute la page, jamais un par produit. En cas de
+ * panne du service d'avis, le catalogue reste servi avec `rating: null`
+ * plutôt que de renvoyer une erreur : c'est la propriété exigée par
+ * CLAUDE.md section 2, et le cœur de la démonstration de résilience.
+ */
+async function withRatings(
+  products: readonly ProductDto[],
+  traceId: string,
+): Promise<ProductWithRatingDto[]> {
+  if (products.length === 0) {
+    return [];
+  }
+
+  try {
+    const ratings = await fetchProductRatings(
+      products.map((product) => product.reference),
+      traceId,
+    );
+
+    return products.map((product) => ({
+      ...product,
+      rating: ratings.get(product.reference) ?? null,
+    }));
+  } catch (error) {
+    // Dégradation volontaire, journalisée en `warn` avec le traceId : elle
+    // reste visible dans Portainer, elle n'est pas silencieuse.
+    logger.warn(
+      { error, traceId, products: products.length },
+      'flux 2 dégradé : avis-api injoignable, notes à null',
+    );
+
+    return products.map((product) => ({ ...product, rating: null }));
+  }
+}
+
 export async function listProducts(
   query: ListProductsQuery,
-): Promise<{ data: ProductDto[]; meta: PaginationMeta }> {
+  traceId: string,
+): Promise<{ data: ProductWithRatingDto[]; meta: PaginationMeta }> {
   const pagination = buildPagination(query.page, query.limit);
   const { items, total } = await productRepository.findMany(query, pagination);
 
   return {
-    data: items.map(toProductDto),
+    data: await withRatings(items.map(toProductDto), traceId),
     meta: buildMeta(pagination, total),
   };
 }

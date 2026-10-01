@@ -50,6 +50,23 @@ const productSchema = {
   },
 } as const;
 
+const ratingSchema = {
+  type: ['object', 'null'],
+  description:
+    "Note moyenne du produit, obtenue auprès d'avis-api (flux 2). Vaut null si le produit n'a aucun avis, ou si avis-api est indisponible : le catalogue reste alors servi en mode dégradé plutôt que de renvoyer une erreur.",
+  properties: {
+    average: { type: 'number', example: 4.5 },
+    count: { type: 'integer', minimum: 0, example: 12 },
+  },
+} as const;
+
+const productWithRatingSchema = {
+  allOf: [
+    productSchema,
+    { type: 'object', properties: { rating: ratingSchema } },
+  ],
+} as const;
+
 const orderSchema = {
   type: 'object',
   properties: {
@@ -126,6 +143,7 @@ export const openApiDocument = {
   components: {
     schemas: {
       Product: productSchema,
+      ProductWithRating: productWithRatingSchema,
       Order: orderSchema,
       ProblemDetails: problemDetails,
       PaginationMeta: paginationMeta,
@@ -173,13 +191,17 @@ export const openApiDocument = {
         ],
         responses: {
           '200': {
-            description: 'Page de produits',
+            description:
+              'Page de produits, chaque produit enrichi de sa note moyenne (flux 2 vers avis-api).',
             content: {
               'application/json': {
                 schema: {
                   type: 'object',
                   properties: {
-                    data: { type: 'array', items: { $ref: '#/components/schemas/Product' } },
+                    data: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/ProductWithRating' },
+                    },
                     meta: { $ref: '#/components/schemas/PaginationMeta' },
                   },
                 },

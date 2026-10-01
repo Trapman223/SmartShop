@@ -5,6 +5,8 @@ export default defineConfig({
     globals: false,
     environment: 'node',
     include: ['tests/**/*.test.ts'],
+    // Coupe tout acces reseau par defaut (cf. tests/setup.ts).
+    setupFiles: ['tests/setup.ts'],
     // Variables minimales pour que src/config/env.ts se charge en test
     // sans qu'aucune base de données réelle ne soit requise.
     env: {
