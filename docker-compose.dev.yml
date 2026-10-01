@@ -1,0 +1,117 @@
+# =============================================================================
+#  Smart-Shop — vérification locale de la conteneurisation
+# =============================================================================
+#
+#  ⚠️  CE FICHIER N'EST PAS LE RENDU.
+#      Le déploiement exigé par le sujet se fait en Docker Swarm, via
+#      docker-stack.yml (étape 11). Ce compose sert uniquement à vérifier
+#      que les images se construisent et démarrent — un replica par service,
+#      pas de réseau overlay, pas de Portainer.
+#      Cf. CLAUDE.md section 10, règle 1.
+# =============================================================================
+
+name: smartshop-dev
+
+services:
+  # ---------------------------------------------------------------------------
+  #  Bases de données
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: smartshop
+      POSTGRES_PASSWORD: dev_only_not_a_secret
+      POSTGRES_DB: smartshop_catalogue
+    ports:
+      - "${PG_HOST_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready évite la course classique : PostgreSQL accepte les
+      # connexions bien après que le conteneur soit « démarré ».
+      test: ["CMD-SHELL", "pg_isready -U smartshop -d smartshop_catalogue"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  mongo:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: smartshop
+      MONGO_INITDB_ROOT_PASSWORD: dev_only_not_a_secret
+      MONGO_INITDB_DATABASE: smartshop_avis
+    ports:
+      - "${MONGO_HOST_PORT:-27017}:27017"
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  #  Migrations Prisma — conteneur éphémère
+  # ---------------------------------------------------------------------------
+  #  L'image de production ne contient pas le CLI prisma (devDependency
+  #  volontairement omise pour rester légère). On réutilise donc le stage
+  #  `builder`, qui dispose des dépendances complètes, le temps d'appliquer
+  #  les migrations. Le conteneur s'arrête ensuite.
+  # ---------------------------------------------------------------------------
+  catalogue-migrate:
+    build:
+      context: ./service-catalogue-commandes
+      target: builder
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: postgresql://smartshop:dev_only_not_a_secret@postgres:5432/smartshop_catalogue?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  #  Services applicatifs — 1 replica chacun (les 3 replicas sont l'étape 11)
+  # ---------------------------------------------------------------------------
+  catalogue-api:
+    build:
+      context: ./service-catalogue-commandes
+    image: smartshop/catalogue-api:1.0.0
+    ports:
+      - "${CATALOGUE_HOST_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://smartshop:dev_only_not_a_secret@postgres:5432/smartshop_catalogue?schema=public
+      AVIS_SERVICE_URL: http://avis-api:4000/graphql
+    depends_on:
+      postgres:
+        condition: service_healthy
+      catalogue-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  avis-api:
+    build:
+      context: ./service-avis-recommandations
+    image: smartshop/avis-api:1.0.0
+    ports:
+      - "${AVIS_HOST_PORT:-4000}:4000"
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      LOG_LEVEL: info
+      MONGODB_URI: mongodb://smartshop:dev_only_not_a_secret@mongo:27017/smartshop_avis?authSource=admin
+      CATALOGUE_SERVICE_URL: http://catalogue-api:3000
+      GRAPHQL_INTROSPECTION: "true"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  mongodata:

@@ -1,0 +1,444 @@
+# =============================================================================
+#  Smart-Shop — docker-stack.yml
+#  Déploiement Docker Swarm en mode Stack
+# =============================================================================
+#
+#  Déploiement :
+#     docker swarm init
+#     ./scripts/create-secrets.sh          # crée les 4 secrets Swarm
+#     docker stack deploy -c docker-stack.yml smart-shop
+#     docker service ls                    # attendu : 3/3 sur les deux API
+#
+#  ⚠️  Ce fichier n'a pas encore été déployé ni testé sur un Swarm réel.
+#
+#  Contraintes du sujet d'examen, toutes présentes ci-dessous :
+#    · 3 replicas pour chacune des deux API
+#    · update_config : parallelism 1, delay 10s
+#    · réseau de type overlay pour les communications inter-services
+#    · Portainer intégré à la stack
+#    · une image Docker par service et par base de données
+#
+#  Chaîne de démarrage :  postgres → catalogue-migrate → catalogue-api ×3
+# =============================================================================
+
+# Pas d attribut `version` : obsolete depuis Compose v2, Docker emet un
+# avertissement et l ignore. Le format Stack est infere du contenu.
+
+# =============================================================================
+#  SERVICES
+# =============================================================================
+services:
+
+  # ---------------------------------------------------------------------------
+  #  API REST — Catalogue & Commandes
+  # ---------------------------------------------------------------------------
+  catalogue-api:
+    image: smartshop/catalogue-api:1.0.0
+    networks:
+      # Trafic entrant + appels vers avis-api (flux 2).
+      - smartshop-public
+      # Seul réseau donnant accès à PostgreSQL.
+      - smartshop-pg
+    ports:
+      - target: 3000
+        published: 3000
+        protocol: tcp
+        mode: ingress
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      LOG_LEVEL: info
+      # Le mot de passe n'apparaît nulle part : l'URL complète est un secret
+      # Swarm monté en fichier, résolu au démarrage par src/config/secrets.ts.
+      DATABASE_URL_FILE: /run/secrets/catalogue_database_url
+      # Communication inter-services par nom DNS Swarm, jamais par localhost
+      # ni par adresse IP : le DNS interne équilibre sur les 3 replicas.
+      AVIS_SERVICE_URL: http://avis-api:4000/graphql
+      AVIS_SERVICE_TIMEOUT_MS: "800"
+      DB_CONNECT_MAX_RETRIES: "6"
+      DB_CONNECT_BASE_DELAY_MS: "1000"
+    secrets:
+      - catalogue_database_url
+    healthcheck:
+      # wget est fourni par busybox : aucun paquet supplémentaire dans l'image.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      # Généreux : Prisma initialise son query engine et retente la connexion
+      # à PostgreSQL avec un backoff exponentiel.
+      start_period: 45s
+    # Laisse l'arrêt gracieux se terminer (délai applicatif : 10 s).
+    stop_grace_period: 20s
+    deploy:
+      mode: replicated
+      replicas: 3                     # ← EXIGÉ par le sujet
+      update_config:
+        parallelism: 1                # ← EXIGÉ par le sujet
+        delay: 10s                    # ← EXIGÉ par le sujet
+        # start-first : le nouveau conteneur devient healthy AVANT l'arrêt de
+        # l'ancien. Sans cela, la mise à jour crée une coupure de service.
+        order: start-first
+        failure_action: rollback
+        monitor: 30s
+        max_failure_ratio: 0
+      rollback_config:
+        parallelism: 1
+        delay: 5s
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+        reservations:
+          cpus: "0.10"
+          memory: 128M
+      labels:
+        smartshop.role: "api-rest"
+
+  # ---------------------------------------------------------------------------
+  #  Migration du schéma PostgreSQL — service éphémère
+  # ---------------------------------------------------------------------------
+  #  Chaîne voulue :   postgres  →  catalogue-migrate  →  catalogue-api ×3
+  #
+  #  Swarm ignore `depends_on` : l'ordre de démarrage ne se contrôle pas. Ce
+  #  service ne le suppose donc pas — il réessaie `prisma migrate deploy`
+  #  jusqu'à ce que PostgreSQL réponde (30 tentatives, 2 s d'intervalle).
+  #  La commande étant idempotente, la rejouer sur une base à jour affiche
+  #  « No pending migrations » et sort en 0.
+  #
+  #  Pendant ce temps, les replicas de catalogue-api démarrent mais leur
+  #  /ready renvoie 503 avec schema: "pending" tant que les tables manquent.
+  #
+  #  Image bâtie sur la cible `migrator` du Dockerfile : elle embarque le CLI
+  #  Prisma, que l'image runtime n'a pas.
+  # ---------------------------------------------------------------------------
+  catalogue-migrate:
+    image: smartshop/catalogue-migrate:1.0.0
+    networks:
+      # Uniquement le réseau de la base : ce job ne sert aucune requête.
+      - smartshop-pg
+    environment:
+      NODE_ENV: production
+      # Même secret que catalogue-api : un seul endroit où vit l'URL.
+      DATABASE_URL_FILE: /run/secrets/catalogue_database_url
+      MIGRATE_MAX_RETRIES: "30"
+      MIGRATE_RETRY_DELAY: "2"
+    secrets:
+      - catalogue_database_url
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        # Un job, pas un service : une fois les migrations appliquées, il
+        # sort en 0 et ne doit pas être relancé. Le service apparaît alors
+        # en 0/1 dans `docker service ls`, avec l'état « Complete ».
+        condition: none
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+        reservations:
+          cpus: "0.10"
+          memory: 128M
+      labels:
+        smartshop.role: "migration"
+
+  # ---------------------------------------------------------------------------
+  #  API GraphQL — Avis & Recommandations
+  # ---------------------------------------------------------------------------
+  avis-api:
+    image: smartshop/avis-api:1.0.0
+    networks:
+      - smartshop-public
+      # Seul réseau donnant accès à MongoDB.
+      - smartshop-mongo
+    ports:
+      - target: 4000
+        published: 4000
+        protocol: tcp
+        mode: ingress
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      LOG_LEVEL: info
+      MONGODB_URI_FILE: /run/secrets/avis_mongodb_uri
+      # Nom DNS Swarm (flux 1), jamais localhost.
+      CATALOGUE_SERVICE_URL: http://catalogue-api:3000
+      CATALOGUE_SERVICE_TIMEOUT_MS: "800"
+      GRAPHQL_INTROSPECTION: "true"
+      CORS_ORIGINS: "*"
+      DB_CONNECT_MAX_RETRIES: "6"
+      DB_CONNECT_BASE_DELAY_MS: "1000"
+    secrets:
+      - avis_mongodb_uri
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    stop_grace_period: 20s
+    deploy:
+      mode: replicated
+      replicas: 3                     # ← EXIGÉ par le sujet
+      update_config:
+        parallelism: 1                # ← EXIGÉ par le sujet
+        delay: 10s                    # ← EXIGÉ par le sujet
+        order: start-first
+        failure_action: rollback
+        monitor: 30s
+        max_failure_ratio: 0
+      rollback_config:
+        parallelism: 1
+        delay: 5s
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+        reservations:
+          cpus: "0.10"
+          memory: 128M
+      labels:
+        smartshop.role: "api-graphql"
+
+  # ---------------------------------------------------------------------------
+  #  PostgreSQL — base du service Catalogue & Commandes
+  # ---------------------------------------------------------------------------
+  #  Aucun bloc `ports` : la base n'est joignable que depuis le réseau overlay
+  #  smartshop-pg, déclaré `internal`. Seul catalogue-api y est rattaché.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    networks:
+      - smartshop-pg
+    environment:
+      POSTGRES_USER: smartshop
+      POSTGRES_DB: smartshop_catalogue
+      # L'image officielle sait lire un mot de passe depuis un fichier.
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+    secrets:
+      - pg_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready évite la course classique : PostgreSQL accepte les
+      # connexions bien après que le conteneur soit « démarré ».
+      test: ["CMD-SHELL", "pg_isready -U smartshop -d smartshop_catalogue"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    stop_grace_period: 30s
+    deploy:
+      mode: replicated
+      # 1 seul replica, volontairement. Répliquer un conteneur PostgreSQL sur
+      # le même volume corromprait les données : la haute disponibilité d'une
+      # base exige un vrai cluster (Patroni, streaming replication), hors
+      # périmètre. Le sujet n'exige 3 replicas que pour « les deux API ».
+      replicas: 1
+      placement:
+        constraints:
+          # Le volume est local au nœud : contraindre le placement garantit
+          # que la base retrouve ses données après un redémarrage.
+          - node.role == manager
+      restart_policy:
+        condition: any
+        delay: 10s
+        window: 120s
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+      labels:
+        smartshop.role: "database-sql"
+
+  # ---------------------------------------------------------------------------
+  #  MongoDB — base du service Avis & Recommandations
+  # ---------------------------------------------------------------------------
+  #  Aucun bloc `ports` : joignable uniquement depuis smartshop-mongo,
+  #  réseau overlay `internal` auquel seul avis-api est rattaché.
+  # ---------------------------------------------------------------------------
+  mongodb:
+    image: mongo:7
+    networks:
+      - smartshop-mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: smartshop
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_password
+      MONGO_INITDB_DATABASE: smartshop_avis
+    secrets:
+      - mongo_password
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 40s
+    stop_grace_period: 30s
+    deploy:
+      mode: replicated
+      replicas: 1                     # même justification que PostgreSQL
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+        delay: 10s
+        window: 120s
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+      labels:
+        smartshop.role: "database-nosql"
+
+  # ---------------------------------------------------------------------------
+  #  Portainer — monitoring exigé par le sujet
+  # ---------------------------------------------------------------------------
+  portainer:
+    image: portainer/portainer-ce:2.21.4
+    # Interroge les agents via le DNS interne de Swarm : `tasks.portainer-agent`
+    # résout vers TOUTES les tâches de l'agent, donc vers tous les nœuds.
+    command: -H tcp://tasks.portainer-agent:9001 --tlsskipverify
+    networks:
+      - smartshop-public
+      - portainer-agent
+    ports:
+      - target: 9443
+        published: 9443
+        protocol: tcp
+        mode: ingress
+      - target: 9000
+        published: 9000
+        protocol: tcp
+        mode: ingress
+    volumes:
+      - portainer_data:/data
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+        delay: 10s
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+      labels:
+        smartshop.role: "monitoring"
+
+  # ---------------------------------------------------------------------------
+  #  Agent Portainer — un par nœud (mode global)
+  # ---------------------------------------------------------------------------
+  #  Seul service autorisé à monter le socket Docker (cf. CLAUDE.md § 8,
+  #  règle 10). C'est lui qui donne à Portainer la vue sur les services, les
+  #  nœuds et les logs en temps réel.
+  # ---------------------------------------------------------------------------
+  portainer-agent:
+    image: portainer/agent:2.21.4
+    networks:
+      - portainer-agent
+    environment:
+      AGENT_CLUSTER_ADDR: tasks.portainer-agent
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+    deploy:
+      # global : exactement une tâche par nœud du cluster, présente et future.
+      mode: global
+      placement:
+        constraints:
+          - node.platform.os == linux
+      restart_policy:
+        condition: any
+        delay: 10s
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+      labels:
+        smartshop.role: "monitoring-agent"
+
+# =============================================================================
+#  RÉSEAUX — tous de type overlay (exigé par le sujet)
+# =============================================================================
+networks:
+  # Trafic entrant et communication entre les deux API.
+  smartshop-public:
+    driver: overlay
+    attachable: true
+
+  # Isolation de PostgreSQL : `internal` coupe tout accès depuis l'extérieur
+  # du cluster. Seuls catalogue-api et postgres y sont rattachés.
+  smartshop-pg:
+    driver: overlay
+    internal: true
+
+  # Isolation de MongoDB : seuls avis-api et mongodb y sont rattachés.
+  smartshop-mongo:
+    driver: overlay
+    internal: true
+
+  # Canal dédié entre Portainer et ses agents.
+  portainer-agent:
+    driver: overlay
+    attachable: true
+
+# =============================================================================
+#  VOLUMES — persistance des deux bases et de Portainer
+# =============================================================================
+volumes:
+  pgdata:
+    driver: local
+  mongodata:
+    driver: local
+  portainer_data:
+    driver: local
+
+# =============================================================================
+#  SECRETS — aucun mot de passe en clair dans ce fichier
+# =============================================================================
+#  `external: true` : les secrets sont créés AVANT le déploiement, par
+#  ./scripts/create-secrets.sh. Ils ne transitent jamais par le dépôt Git et
+#  sont chiffrés au repos dans le Raft de Swarm.
+#
+#  Le mot de passe apparaît dans deux secrets (pg_password pour l'image
+#  PostgreSQL, catalogue_database_url pour l'application) : c'est une
+#  duplication assumée, l'image officielle attendant le mot de passe seul
+#  tandis que Prisma exige une URL de connexion complète.
+# =============================================================================
+secrets:
+  pg_password:
+    external: true
+  mongo_password:
+    external: true
+  catalogue_database_url:
+    external: true
+  avis_mongodb_uri:
+    external: true
