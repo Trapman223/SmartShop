@@ -1,0 +1,55 @@
+# Dépendances
+node_modules/
+.pnp/
+.pnp.js
+
+# Build
+dist/
+build/
+*.tsbuildinfo
+
+# Prisma (client généré)
+**/node_modules/.prisma/
+**/src/generated/
+
+# Tests & couverture
+coverage/
+.nyc_output/
+*.lcov
+
+# Secrets et environnement — NE JAMAIS COMMITTER
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Dumps et données locales
+*.sql.gz
+*.dump
+data/
+pgdata/
+mongodata/
+
+# Outils & OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# Divers
+.cache/
+.tmp/
+tmp/
