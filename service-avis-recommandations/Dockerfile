@@ -41,7 +41,7 @@ FROM node:22-alpine AS runner
 
 LABEL org.opencontainers.image.title="smartshop-avis-api" \
       org.opencontainers.image.description="Smart-Shop — API GraphQL Avis & Recommandations" \
-      org.opencontainers.image.version="1.0.0"
+      org.opencontainers.image.version="1.1.0"
 
 # tini : PID 1. Pas de curl : busybox fournit déjà wget pour le HEALTHCHECK.
 RUN apk add --no-cache tini

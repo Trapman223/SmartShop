@@ -33,7 +33,7 @@ services:
   #  API REST — Catalogue & Commandes
   # ---------------------------------------------------------------------------
   catalogue-api:
-    image: smartshop/catalogue-api:1.0.0
+    image: smartshop/catalogue-api:1.1.0
     networks:
       # Trafic entrant + appels vers avis-api (flux 2).
       - smartshop-public
@@ -119,7 +119,7 @@ services:
   #  Prisma, que l'image runtime n'a pas.
   # ---------------------------------------------------------------------------
   catalogue-migrate:
-    image: smartshop/catalogue-migrate:1.0.0
+    image: smartshop/catalogue-migrate:1.1.0
     networks:
       # Uniquement le réseau de la base : ce job ne sert aucune requête.
       - smartshop-pg
@@ -156,7 +156,7 @@ services:
   #  API GraphQL — Avis & Recommandations
   # ---------------------------------------------------------------------------
   avis-api:
-    image: smartshop/avis-api:1.0.0
+    image: smartshop/avis-api:1.1.0
     networks:
       - smartshop-public
       # Seul réseau donnant accès à MongoDB.
