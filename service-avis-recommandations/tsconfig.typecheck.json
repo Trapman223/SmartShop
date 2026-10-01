@@ -1,0 +1,11 @@
+{
+  "//": "Vérification de types élargie : couvre aussi les tests, que tsconfig.json exclut car ils ne font pas partie du build.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

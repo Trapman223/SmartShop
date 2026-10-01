@@ -1,0 +1,52 @@
+# ============================================================================
+#  Contexte de build Docker — tout ce qui NE DOIT PAS entrer dans l'image.
+#  Un contexte réduit accélère le build et évite les fuites de secrets.
+# ============================================================================
+
+# Dépendances de la machine hôte : elles seraient compilées pour la mauvaise
+# architecture (darwin/arm64 au lieu de linux/musl). npm ci les réinstalle
+# proprement dans le conteneur.
+node_modules
+**/node_modules
+
+# Artefacts de build de l'hôte : recompilés dans le builder.
+dist
+build
+*.tsbuildinfo
+coverage
+.nyc_output
+
+# Secrets — aucune variante de .env ne doit jamais entrer dans l'image,
+# pas même .env.example (valeurs factices, mais bruit inutile).
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+# Tests et outillage de développement : inutiles en production.
+tests
+vitest.config.ts
+eslint.config.js
+tsconfig.typecheck.json
+
+# Documentation et métadonnées de dépôt.
+*.md
+.git
+.gitignore
+.github
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Journaux et fichiers temporaires.
+*.log
+npm-debug.log*
+.cache
+.tmp
+tmp
+
+# Le Dockerfile lui-même n'a pas à être copié dans l'image.
+Dockerfile
+.dockerignore
