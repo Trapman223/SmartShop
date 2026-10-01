@@ -9,11 +9,38 @@ export const typeDefs = /* GraphQL */ `
   scalar DateTime
   scalar JSON
 
+  """
+  Produit du catalogue, résolu à chaud auprès de \`catalogue-api\` (flux 1).
+
+  Ce service ne stocke aucune donnée produit : il ne connaît que des
+  références opaques. Les champs ci-dessous proviennent de PostgreSQL, via
+  \`GET /products/batch\`, et sont regroupés par DataLoader — une requête
+  portant sur 20 avis ne déclenche qu'un seul appel HTTP.
+
+  Volontairement **nullable** : si \`catalogue-api\` est indisponible ou si la
+  référence n'existe plus au catalogue, ce champ vaut \`null\` et le reste de
+  la réponse est servi normalement (mode dégradé).
+  """
+  type Product {
+    reference: String!
+    name: String!
+    description: String
+    """
+    Montant décimal transporté en chaîne : un Float perdrait la précision
+    du NUMERIC PostgreSQL.
+    """
+    price: String!
+    stock: Int!
+    available: Boolean!
+  }
+
   "Avis déposé par un client sur un produit."
   type Review {
     id: ID!
     userId: String!
     productId: String!
+    "Produit concerné, résolu auprès de catalogue-api (flux 1)."
+    product: Product
     "Note entière comprise entre 1 et 5."
     rating: Int!
     comment: String!
@@ -48,6 +75,8 @@ export const typeDefs = /* GraphQL */ `
   "Note agrégée d'un produit. average vaut 0 si le produit n'a aucun avis."
   type ProductRating {
     productId: String!
+    "Produit noté, résolu auprès de catalogue-api (flux 1)."
+    product: Product
     average: Float!
     count: Int!
     distribution: RatingDistribution!
@@ -97,6 +126,8 @@ export const typeDefs = /* GraphQL */ `
   """
   type Recommendation {
     productId: String!
+    "Produit recommandé, résolu auprès de catalogue-api (flux 1)."
+    product: Product
     "Score entre 0 et 1, arrondi au millième."
     score: Float!
     reason: RecommendationReason!

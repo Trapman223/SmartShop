@@ -1,3 +1,4 @@
+import { makeTestContext } from '../helpers/fixtures.js';
 import { describe, it, expect, vi, afterAll } from 'vitest';
 import { Kind } from 'graphql';
 import { DateTimeScalar } from '../../src/graphql/scalars.js';
@@ -82,7 +83,7 @@ describe('Query productRatings — agrégation par lot', () => {
       {
         query: '{ productRatings(productIds: ["p-a", "p-inconnu"]) { productId average count } }',
       },
-      { contextValue: { traceId: 'test', customerId: undefined } },
+      { contextValue: makeTestContext() },
     );
 
     if (response.body.kind !== 'single') throw new Error('réponse inattendue');

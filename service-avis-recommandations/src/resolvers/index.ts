@@ -8,6 +8,8 @@ import * as browsingService from '../services/browsing.service.js';
 import * as recommendationService from '../services/recommendation.service.js';
 import { toBrowsingEvent, toProductRating, toReview } from './serializers.js';
 import type { ReviewSort } from '../repositories/review.repository.js';
+import type { GraphQLContext } from '../context.js';
+import type { CatalogueProduct } from '../clients/catalogue.client.js';
 
 interface ListArgs {
   limit?: number | null;
@@ -15,6 +17,25 @@ interface ListArgs {
   sort?: ReviewSort | null;
   minRating?: number | null;
   tags?: string[] | null;
+}
+
+/**
+ * Flux 1 — résolution d'un champ `product` (cf. CLAUDE.md section 2).
+ *
+ * Les trois types qui exposent `product` portent tous un `productId` : le
+ * même resolver les sert donc tous les trois. L'appel passe par le
+ * DataLoader du contexte, qui regroupe toutes les références d'une même
+ * requête en un seul `GET /products/batch` — aucun N+1.
+ *
+ * Renvoie `null` si la référence est inconnue du catalogue ou si
+ * `catalogue-api` est indisponible : la requête GraphQL reste servie.
+ */
+function resolveProduct(
+  parent: { productId: string },
+  _args: unknown,
+  context: GraphQLContext,
+): Promise<CatalogueProduct | null> {
+  return context.loaders.product.load(parent.productId);
 }
 
 export const resolvers = {
@@ -90,4 +111,9 @@ export const resolvers = {
     trackBrowsingEvent: async (_parent: unknown, args: { input: unknown }) =>
       toBrowsingEvent(await browsingService.trackEvent(args.input)),
   },
+
+  // --- Flux 1 : résolution des champs `Product` auprès de catalogue-api ---
+  Review: { product: resolveProduct },
+  ProductRating: { product: resolveProduct },
+  Recommendation: { product: resolveProduct },
 };

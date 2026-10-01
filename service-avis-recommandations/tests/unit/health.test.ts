@@ -1,3 +1,4 @@
+import { makeTestContext } from '../helpers/fixtures.js';
 import { describe, it, expect, vi } from 'vitest';
 
 // La readiness interroge MongoDB : on isole la couche base de données
@@ -26,7 +27,7 @@ describe('avis-api — schéma GraphQL', () => {
           }
         `,
       },
-      { contextValue: { traceId: 'trace-de-test', customerId: undefined } },
+      { contextValue: makeTestContext(new Map(), 'trace-de-test') },
     );
 
     expect(response.body.kind).toBe('single');
@@ -47,7 +48,7 @@ describe('avis-api — schéma GraphQL', () => {
 
     const response = await apollo.executeOperation(
       { query: '{ queryInexistante { id } }' },
-      { contextValue: { traceId: 'trace-de-test', customerId: undefined } },
+      { contextValue: makeTestContext(new Map(), 'trace-de-test') },
     );
 
     if (response.body.kind !== 'single') return;

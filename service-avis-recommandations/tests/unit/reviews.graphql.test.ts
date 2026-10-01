@@ -5,6 +5,7 @@ import {
   REVIEW_ID,
   UNKNOWN_ID,
   USER_ID,
+  makeTestContext,
 } from '../helpers/fixtures.js';
 
 const reviewRepo = {
@@ -28,7 +29,7 @@ vi.mock('../../src/db/mongoose.js', () => ({
 const { createApolloServer } = await import('../../src/app.js');
 const apollo = createApolloServer();
 
-const CONTEXT = { traceId: 'test', customerId: undefined };
+const CONTEXT = makeTestContext();
 
 async function run(query: string, variables?: Record<string, unknown>) {
   const response = await apollo.executeOperation(

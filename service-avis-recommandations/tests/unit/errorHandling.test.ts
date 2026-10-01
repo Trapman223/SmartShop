@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import mongoose from 'mongoose';
-import { makeBrowsingEventDocument, REVIEW_ID, USER_ID } from '../helpers/fixtures.js';
+import { makeBrowsingEventDocument, REVIEW_ID, USER_ID, makeTestContext } from '../helpers/fixtures.js';
 
 const reviewRepo = {
   findPage: vi.fn(),
@@ -37,7 +37,7 @@ const apollo = createApolloServer();
 async function run(query: string, variables?: Record<string, unknown>) {
   const response = await apollo.executeOperation(
     { query, ...(variables !== undefined ? { variables } : {}) },
-    { contextValue: { traceId: 'test', customerId: undefined } },
+    { contextValue: makeTestContext() },
   );
   if (response.body.kind !== 'single') throw new Error('réponse inattendue');
   return response.body.singleResult;
