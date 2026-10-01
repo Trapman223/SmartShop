@@ -76,12 +76,18 @@ chaque exigence du sujet doit être **démontrable** (capture, log, commande).
           │   3 replicas     │◄─┤   3 replicas     │  │  CE + agent │
           │  REST / Express  ├─►│ GraphQL / Apollo │  │  (global)   │
           └───────────┬──────┘  └────┬─────────────┘  └──┬──────────┘
-   ══════ overlay « smartshop-data » (internal: true) ════│══════════
-                  ┌───▼────────┐        ┌────────▼───┐    │
-                  │ PostgreSQL │        │  MongoDB   │  docker.sock
-                  │ 1 replica  │        │ 1 replica  │  (manager)
-                  │  pgdata    │        │ mongodata  │
-                  └────────────┘        └────────────┘
+   ═ overlay « smartshop-pg » ═╗   ╔═ overlay « smartshop-mongo » ═╗│
+        (internal: true)       ║   ║       (internal: true)        ║│
+                  ┌────────────▼─┐ ║                 ┌─────────────▼┐
+                  │  PostgreSQL  │ ║                 │   MongoDB    │  docker.sock
+                  │  1 replica   │ ╚═════════════════│  1 replica   │  (manager)
+                  │    pgdata    │                   │  mongodata   │
+                  └──────────────┘                   └──────────────┘
+
+  Une base par réseau, chacun `internal` : PostgreSQL n'est joignable que par
+  catalogue-api, MongoDB que par avis-api. Un service ne peut donc pas même
+  atteindre la base de l'autre par erreur — l'isolation est topologique, pas
+  seulement conventionnelle.
 ```
 
 ### Service 1 — `service-catalogue-commandes`
@@ -114,7 +120,8 @@ suivants font partie du périmètre et ne doivent pas être supprimés :
   **Obligatoire :** batching via **DataLoader** — aucun resolver ne doit
   produire de N+1.
 - **Flux 2 — `catalogue-api` → `avis-api` (GraphQL).** `GET /products` enrichit
-  chaque produit de sa note moyenne via la query `productRatings(refs: [...])`.
+  chaque produit de sa note moyenne via la query
+  `productRatings(productIds: [...])`.
   **Obligatoire :** timeout **800 ms** et **fallback `rating: null`** — si
   `avis-api` est indisponible, le catalogue reste servi en mode dégradé.
 
@@ -303,7 +310,7 @@ une capture avant le rendu.
 | Routes REST | `kebab-case`, noms au pluriel | `/products`, `/orders/{id}` |
 | Services Swarm | `kebab-case` | `catalogue-api`, `avis-api` |
 | Images Docker | `smartshop/<service>:<semver>` | `smartshop/catalogue-api:1.0.0` |
-| Réseaux overlay | `smartshop-<rôle>` | `smartshop-public`, `smartshop-data` |
+| Réseaux overlay | `smartshop-<rôle>` | `smartshop-public`, `smartshop-pg`, `smartshop-mongo` |
 | Volumes | `snake_case` | `pgdata`, `mongodata`, `portainer_data` |
 | Références produit | `SS-PRD-#####` | `SS-PRD-00123` |
 | Branches Git | `<type>/<description-courte>` | `feat/orders-transaction` |
@@ -348,7 +355,7 @@ SmartShop/
 │   │   ├── repositories/              accès Prisma uniquement, dont les transactions
 │   │   ├── validators/                schémas zod des entrées
 │   │   ├── utils/                     money, pagination, orderCalculation, serializers
-│   │   ├── clients/avisClient.ts      flux 2 (timeout 800ms + fallback)
+│   │   ├── clients/avis.client.ts     flux 2 (timeout 800ms + fallback)
 │   │   ├── errors/                    hiérarchie AppError
 │   │   └── middlewares/               validate, errorHandler, requestId
 │   └── tests/{unit,integration,helpers}/
@@ -364,7 +371,8 @@ SmartShop/
 │   │   ├── db/client.ts, indexes.ts
 │   │   ├── services/                  review, rating, recommendation, history
 │   │   ├── repositories/              requêtes et pipelines Mongo uniquement
-│   │   ├── clients/catalogueClient.ts flux 1 + DataLoader
+│   │   ├── clients/catalogue.client.ts flux 1 (timeout 800ms + fallback)
+│   │   ├── clients/product.loader.ts   DataLoader (anti N+1)
 │   │   ├── errors/
 │   │   └── context.ts
 │   └── tests/{unit,integration}/
@@ -401,8 +409,9 @@ microservices indépendants, pas un monolithe découpé).
 3. **Conteneurs non-root.** Chaque Dockerfile applicatif se termine par
    `USER node`. Aucun service applicatif ne tourne en root.
 4. **Bases jamais exposées publiquement.** PostgreSQL et MongoDB n'ont **aucun**
-   bloc `ports:` dans `docker-stack.yml` et vivent sur le réseau overlay
-   `smartshop-data` déclaré `internal: true`.
+   bloc `ports:` dans `docker-stack.yml`. Chacune vit sur son propre réseau
+   overlay déclaré `internal: true` — `smartshop-pg` et `smartshop-mongo` —
+   auquel seul son service est rattaché.
 5. **Requêtes SQL exclusivement paramétrées** (`$1`, `$2`, …). Toute
    concaténation de chaîne dans une requête SQL est un défaut bloquant.
 6. **Pas d'opérateur Mongo construit depuis une entrée utilisateur.** Les
@@ -455,6 +464,7 @@ microservices indépendants, pas un monolithe découpé).
     réelles au 30/09/2026, à ne pas dépasser :
     - `catalogue-api` : **368 Mo** (238 base + 130 de charge utile)
     - `avis-api` : **293 Mo** (238 base + 55 de charge utile)
+    - `catalogue-migrate` : **427 Mo** (job éphémère : CLI Prisma + engines)
 
     Deux optimisations obtenues par mesure, à ne pas défaire :
     - **`--omit=peer` sur `catalogue-api` uniquement.** `@prisma/client`
@@ -496,8 +506,17 @@ microservices indépendants, pas un monolithe découpé).
 5. **Réseaux overlay uniquement :**
    - `smartshop-public` — overlay, `attachable: true` : trafic entrant et
      communication inter-API.
-   - `smartshop-data` — overlay, `internal: true` : accès aux bases, isolé de
-     l'extérieur.
+   - `smartshop-pg` — overlay, `internal: true` : accès à PostgreSQL. Seuls
+     `catalogue-api`, `catalogue-migrate` et `postgres` y sont rattachés.
+   - `smartshop-mongo` — overlay, `internal: true` : accès à MongoDB. Seuls
+     `avis-api` et `mongodb` y sont rattachés.
+   - `portainer-agent` — overlay : canal dédié entre Portainer et ses agents.
+
+   Deux réseaux de données plutôt qu'un seul : avec un `smartshop-data`
+   commun, `avis-api` pourrait ouvrir une connexion vers PostgreSQL. La règle
+   « une base par service » resterait déclarative au lieu d'être imposée par
+   la topologie.
+
    Aucun réseau `bridge` ou `host` dans `docker-stack.yml`.
 6. **Bases de données en `replicas: 1`**, avec
    `placement.constraints: [node.role == manager]` et un volume nommé.
