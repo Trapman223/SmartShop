@@ -544,7 +544,30 @@ libre, tags, signaux de navigation).
 
 ---
 
-## 16. Structure du dépôt
+## 16. Compte-rendu
+
+Le compte-rendu détaillé — schéma d'architecture et flux de données,
+justification SQL vs NoSQL, mesures d'optimisation des images, résultats
+chiffrés des tests de concurrence et de résilience — vit dans
+[`docs/compte-rendu/compte-rendu.md`](docs/compte-rendu/compte-rendu.md).
+
+Pour produire le PDF à envoyer :
+
+```bash
+python3 scripts/build-compte-rendu.py
+open docs/compte-rendu/compte-rendu.html
+# puis Cmd+P → « Enregistrer au format PDF »
+```
+
+Le script n'a **aucune dépendance** : ni pandoc, ni npm, ni pip. Le HTML produit
+est régénérable à volonté et n'est donc pas versionné.
+
+> Les captures d'écran Portainer restent à insérer : le compte-rendu indique
+> précisément lesquelles prendre et à quel endroit (§ 6).
+
+---
+
+## 17. Structure du dépôt
 
 ```
 SmartShop/
@@ -586,7 +609,7 @@ SmartShop/
 
 ---
 
-## 17. Développement local
+## 18. Développement local
 
 Chaque service est autonome. Depuis son dossier :
 
@@ -615,7 +638,7 @@ docker compose -f docker-compose.dev.yml up -d
 
 ---
 
-## 18. Arrêt et nettoyage
+## 19. Arrêt et nettoyage
 
 ```bash
 docker stack rm smart-shop
@@ -632,7 +655,7 @@ docker swarm leave --force
 
 ---
 
-## 19. Dépannage
+## 20. Dépannage
 
 | Symptôme | Cause probable | Correction |
 |---|---|---|

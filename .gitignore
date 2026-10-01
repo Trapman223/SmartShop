@@ -12,6 +12,10 @@ build/
 **/node_modules/.prisma/
 **/src/generated/
 
+# Compte-rendu : artefacts regeneres par scripts/build-compte-rendu.py
+docs/compte-rendu/compte-rendu.html
+docs/compte-rendu/compte-rendu.pdf
+
 # Tests & couverture
 coverage/
 .nyc_output/
